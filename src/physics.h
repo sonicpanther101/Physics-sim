@@ -6,7 +6,7 @@
 
 #define dT (float) 1/60
 #define solverIterations 5
-#define k_damping (float) 0.95
+#define k_damping (float) 0.9
 
 struct Point {
     float invMass;

@@ -2,6 +2,7 @@
 #include <SDL3/SDL_rect.h>
 #include <cstddef>
 #include <glm/geometric.hpp>
+#include <strings.h>
 #include <vector>
 #include <iostream>
 #include "physics.h"
@@ -63,7 +64,7 @@ void step(vector<Point> &points, vector<Constraint> &constraints)
     // applying forces external to the system (gravity in this case)
     int test = 0;
     for (Point &point : points) {
-        if (test == 4)
+        if (test)
             point.vel += dT * point.invMass * f_ext(point.pos);
         test = (test+1)%4;
     }
@@ -98,7 +99,7 @@ void step(vector<Point> &points, vector<Constraint> &constraints)
 
 glm::vec2 f_ext(glm::vec2 &pos)
 {
-    return {0,1}; // gravity
+    return {0,10}; // gravity
 }
 
 void dampVelocities(vector<Point> &points)
@@ -144,19 +145,48 @@ vector<Constraint> generateCollisionConstraints(Point point)
     return {};
 }
 
+glm::vec2 gradientC(vector<glm::vec2> posArray, int index, Constraint constraint)
+{
+    // del_p_j C(p_1,...,p_n) ≈ (C(p_1,...,p_k+ε,...,p_n) - C(p_1,...,p_n))/ε
+    vector<glm::vec2> posExtra = posArray;
+    static float eps = 1e-4f;
+    static glm::vec2 grad;
+    float C = constraint.pfunc(posArray);
+
+    posExtra[index].x += eps;
+    float CplusX = constraint.pfunc(posExtra);
+    grad.x = (CplusX - C) / eps;
+
+    posExtra[index] += glm::vec2{-eps, eps};
+    float CplusY = constraint.pfunc(posExtra);
+    grad.y = (CplusY - C) / eps;
+    return grad;
+}
+
 void projectConstraints(vector<Constraint> &constraints, vector<Point> &points)
 {
-    // TODO: generalise to all constraints
-
-    // distance constraint
-    Point* p1;
-    Point* p2;
+    Point* point_i;
     float C;
+    float sumWeightedGradSq;
+    vector<glm::vec2> posArray;
+    float scalingFactor;
+    glm::vec2 gradC;
     for (Constraint &constraint : constraints) {
-        p1 = &points[constraint.indices[0]];
-        p2 = &points[constraint.indices[1]];
-        C = constraint.pfunc(vector<glm::vec2>{p1->newPos, p2->newPos});
-        p1->newPos -= p1->invMass / (p1->invMass + p2->invMass) * C * (p1->newPos - p2->newPos) / glm::length(p1->newPos - p2->newPos);
-        p2->newPos += p2->invMass / (p1->invMass + p2->invMass) * C * (p1->newPos - p2->newPos) / glm::length(p1->newPos - p2->newPos);
+        sumWeightedGradSq = 0;
+        posArray = {};
+        for (int index : constraint.indices) {
+            point_i = &points[index];
+            posArray.push_back(point_i->newPos);
+        }
+        C = constraint.pfunc(posArray);
+        for (int i = 0; i < constraint.indices.size(); i++) {
+            point_i = &points[constraint.indices[i]];
+            sumWeightedGradSq += point_i->invMass * glm::length2(gradientC(posArray, i, constraint));
+        }
+        for (int i = 0; i < constraint.indices.size(); i++) {
+            point_i = &points[constraint.indices[i]];
+            scalingFactor = C / sumWeightedGradSq;
+            point_i->newPos -= scalingFactor * point_i->invMass * gradientC(posArray, i, constraint);
+        }
     }
 }

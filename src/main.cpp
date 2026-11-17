@@ -4,6 +4,7 @@
 #include <SDL3/SDL_video.h>
 #include <iostream>
 #include <SDL3/SDL.h>
+#include <set>
 #include <vector>
 #include "physics.h"
 
@@ -26,7 +27,7 @@ struct ColourSceme
 };
 
 void cleanup(SDLState &state);
-void drawCircle(SDL_Point center, int radius, SDL_Color colour, SDLState &state);
+void drawCircle(SDL_FPoint center, float radius, SDL_Color colour, SDLState &state);
 void setColour(SDL_Color colour, SDLState &state);
 
 int main(int argc, char* argv[])
@@ -69,6 +70,18 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // frame pacing setup
+    const double targetFrameTime = 1.0 / 120.0; // 120 Hz render loop
+    const Uint64 perfFreq       = SDL_GetPerformanceFrequency();
+    const Uint64 frameTicks     = (Uint64)(targetFrameTime * (double)perfFreq);
+    Uint64 nextFrameTick        = SDL_GetPerformanceCounter();
+    Uint64 frameCount           = 0;
+
+    // slow-frame reporting
+    Uint64 reportWindowStart = SDL_GetTicks();
+    int    slowFrames        = 0;
+    double worstOverrunMs    = 0.0;
+
     // start sim loop
     bool running = true;
     while (running) {
@@ -83,36 +96,99 @@ int main(int argc, char* argv[])
         }
 
         // physics sim step
-        step(points, constraints);
+        if (frameCount % 2 == 0) {
+            step(points, constraints);
+        }
+        frameCount++;
 
         // perform drawing commands
         setColour(catppuccin.base, state);
         SDL_RenderClear(state.renderer);
 
         for (Point &point : points) {
-            drawCircle({(int) point.pos.x+width/2,(int) point.pos.y+height/2}, 25.0f, catppuccin.blue, state);
+            drawCircle({point.pos.x+(float) width/2,point.pos.y+(float) height/2}, 25.0f, catppuccin.blue, state);
+        }
+        setColour(catppuccin.red, state);
+        for (Constraint &constraint : constraints) {
+            SDL_RenderLine(state.renderer, points[constraint.indices[0]].pos.x+(float) width/2, points[constraint.indices[0]].pos.y+(float) height/2, points[constraint.indices[1]].pos.x+(float) width/2, points[constraint.indices[1]].pos.y+(float) height/2);
         }
 
         // swap buffers and present
         SDL_RenderPresent(state.renderer);
+
+        // pace to the next 120 Hz deadline
+        nextFrameTick += frameTicks; // absolute schedule, no drift
+        Uint64 nowTick = SDL_GetPerformanceCounter();
+
+        if (nowTick < nextFrameTick) {
+            // got here early: sleep the remainder of the frame
+            Uint64 sleepNs = (Uint64)((double)(nextFrameTick - nowTick) * 1e9 / (double)perfFreq);
+            SDL_DelayPrecise(sleepNs);
+        } else {
+            // this frame took longer than 1/120 s, so we can't hold 120 Hz
+            double overrunMs = (double)(nowTick - nextFrameTick) * 1000.0 / (double)perfFreq;
+            ++slowFrames;
+            if (overrunMs > worstOverrunMs) {
+                worstOverrunMs = overrunMs;
+            }
+
+            Uint64 ticksNow = SDL_GetTicks();
+            if (ticksNow - reportWindowStart >= 1000) {
+                cout << "Warning: below 120 Hz - " << slowFrames
+                     << " late frame(s) in the last " << (ticksNow - reportWindowStart)
+                     << " ms (worst overrun " << worstOverrunMs << " ms)" << endl;
+                reportWindowStart = ticksNow;
+                slowFrames        = 0;
+                worstOverrunMs    = 0.0;
+            }
+
+            // resync instead of trying to catch up; otherwise a recovered
+            // loop would burst-frame and run physics faster than 60 Hz
+            nextFrameTick = nowTick;
+        }
     }
 
     cleanup(state);
     return 0;
 }
 
-void drawCircle(SDL_Point center, int radius, SDL_Color colour, SDLState &state)
+void drawCircle(SDL_FPoint center, float radius, SDL_Color colour, SDLState &state)
 {
-    setColour(colour, state);
-    for (int w = 0; w < radius * 2; w++) {
-        for (int h = 0; h < radius * 2; h++) {
-            int dx = radius - w; // horizontal offset
-            int dy = radius - h; // vertical offset
-            if ((dx*dx + dy*dy) <= (radius * radius)) {
-                SDL_RenderPoint(state.renderer, center.x + dx, center.y + dy);
-            }
-        }
+    constexpr int   segments = 32;                       // bump for larger radii
+    constexpr float twoPi    = 2*SDL_PI_D;
+
+    SDL_Vertex verts[segments + 1];                      // 0 = centre, 1..segments = rim
+    int        indices[segments * 3];
+
+    const SDL_FColor c = {
+        colour.r / 255.0f,
+        colour.g / 255.0f,
+        colour.b / 255.0f,
+        1.0f
+    };
+
+    verts[0].position = center;
+    verts[0].color    = c;
+    verts[0].tex_coord = {0.0f, 0.0f};
+
+    for (int i = 0; i < segments; ++i) {
+        const float angle = twoPi * (float)i / (float)segments;
+        verts[i + 1].position = {
+            center.x + cosf(angle) * radius,
+            center.y + sinf(angle) * radius
+        };
+        verts[i + 1].color     = c;
+        verts[i + 1].tex_coord = {0.0f, 0.0f};
     }
+
+    // fan -> triangle list: (0, i+1, i+2), wrapping the last rim vertex back to 1
+    for (int i = 0; i < segments; ++i) {
+        indices[i * 3 + 0] = 0;
+        indices[i * 3 + 1] = i + 1;
+        indices[i * 3 + 2] = (i + 1 < segments) ? i + 2 : 1;
+    }
+
+    SDL_RenderGeometry(state.renderer, nullptr, verts, segments + 1, indices, segments * 3);
 }
 
 void setColour(SDL_Color colour, SDLState &state)
