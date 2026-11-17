@@ -20,6 +20,7 @@ struct ColourSceme
 {
     SDL_Color base;
     SDL_Color plain;
+    SDL_Color crust;
     SDL_Color red;
     SDL_Color yellow;
     SDL_Color green;
@@ -41,6 +42,7 @@ int main(int argc, char* argv[])
     ColourSceme catppuccin = {
         .base   = {30 ,30 ,46 },
         .plain  = {205,214,244},
+        .crust  = {17 ,17 ,27 },
         .red    = {243,139,168},
         .yellow = {249,226,175},
         .green  = {166,227,161},
@@ -105,12 +107,15 @@ int main(int argc, char* argv[])
         setColour(catppuccin.base, state);
         SDL_RenderClear(state.renderer);
 
-        for (Point &point : points) {
-            drawCircle({point.pos.x+(float) width/2,point.pos.y+(float) height/2}, 25.0f, catppuccin.blue, state);
+        drawCircle({(float) width/2,(float) height/2}, 100.0f, catppuccin.crust, state);
+        for (size_t i = 0; i < points.size(); i++) {
+            drawCircle({points[i].pos.x+(float) width/2,points[i].pos.y+(float) height/2}, 5.0f, catppuccin.blue, state);
         }
+
         setColour(catppuccin.red, state);
         for (Constraint &constraint : constraints) {
-            SDL_RenderLine(state.renderer, points[constraint.indices[0]].pos.x+(float) width/2, points[constraint.indices[0]].pos.y+(float) height/2, points[constraint.indices[1]].pos.x+(float) width/2, points[constraint.indices[1]].pos.y+(float) height/2);
+            if (constraint.cardinality == 2)
+                SDL_RenderLine(state.renderer, points[constraint.indices[0]].pos.x+(float) width/2, points[constraint.indices[0]].pos.y+(float) height/2, points[constraint.indices[1]].pos.x+(float) width/2, points[constraint.indices[1]].pos.y+(float) height/2);
         }
 
         // swap buffers and present

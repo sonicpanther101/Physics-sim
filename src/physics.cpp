@@ -1,6 +1,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_rect.h>
 #include <cstddef>
+#include <glm/exponential.hpp>
 #include <glm/geometric.hpp>
 #include <strings.h>
 #include <vector>
@@ -19,42 +20,88 @@ void dampVelocities(vector<Point> &points);
 vector<Constraint> generateCollisionConstraints(Point &point);
 void projectConstraints(vector<Constraint> &constraints, vector<Point> &points);
 
-float distanceConstraint(vector<glm::vec2> array)
+std::function<float(std::vector<glm::vec2>)> makeDistanceConstraint(float dist)
 {
-    if (array.size() != 2) {
-        return 0;
-    }
-    return glm::length(array[0] - array[1]) - 50;
+    return [dist](std::vector<glm::vec2> array) -> float {
+        if (array.size() != 2) {
+            return 0.0f;
+        }
+        return glm::length(array[0] - array[1]) - dist;
+    };
+}
+std::function<float(std::vector<glm::vec2>)> makeBoundaryConstraint(float dist)
+{
+    return [dist](std::vector<glm::vec2> array) -> float {
+        if (array.size() != 1) {
+            return 0.0f;
+        }
+        return dist - glm::length(array[0]);
+    };
 }
 
 void initialise(vector<Point> &points, vector<Constraint> &constraints)
 {
+    // TODO: get different objects going, after that, collisions
     Point point;
+    // 4 points in square
     point.pos = {25,25};
     point.vel = {0,0};
-    point.invMass = 1;
     point.mass = 1;
+    point.invMass = 1/point.mass;
     points.push_back(point);
     point.pos = {25,-25};
     point.vel = {0,0};
-    point.invMass = 1;
     point.mass = 1;
+    point.invMass = 1/point.mass;
     points.push_back(point);
     point.pos = {-25,-25};
     point.vel = {0,0};
-    point.invMass = 1;
     point.mass = 1;
+    point.invMass = 1/point.mass;
     points.push_back(point);
     point.pos = {-25,25};
     point.vel = {0,0};
-    point.invMass = 1;
     point.mass = 1;
+    point.invMass = 1/point.mass;
     points.push_back(point);
-
+    // control point
+    point.pos = {200,0};
+    point.vel = {0,0};
+    point.mass = 1;
+    point.invMass = 1/point.mass;
+    points.push_back(point);
+    
     Constraint constraint;
+    float stiff = 1e-2;
+    // hold in square
     for (int i = 0; i < 4; i++) {
+        constraint.stiffness = stiff;
         constraint.indices = {i, (i+1)%4};
-        constraint.pfunc = &distanceConstraint;
+        constraint.pfunc = makeDistanceConstraint(50);
+        constraint.cardinality = 2;
+        constraint.equality = true;
+        constraints.push_back(constraint);
+    }
+    constraint.stiffness = stiff;
+    constraint.indices = {0, 2};
+    constraint.pfunc = makeDistanceConstraint(glm::sqrt(5000));
+    constraint.cardinality = 2;
+    constraint.equality = true;
+    constraints.push_back(constraint);
+    constraint.stiffness = stiff;
+    constraint.indices = {1, 3};
+    constraint.pfunc = makeDistanceConstraint(glm::sqrt(5000));
+    constraint.cardinality = 2;
+    constraint.equality = true;
+    constraints.push_back(constraint);
+
+    // circle boundary
+    for (int i = 0; i < 5; i++) {
+        constraint.stiffness = 0.99;
+        constraint.indices = {i};
+        constraint.pfunc = makeBoundaryConstraint(100);
+        constraint.cardinality = 1;
+        constraint.equality = false;
         constraints.push_back(constraint);
     }
 }
@@ -62,11 +109,8 @@ void initialise(vector<Point> &points, vector<Constraint> &constraints)
 void step(vector<Point> &points, vector<Constraint> &constraints)
 {
     // applying forces external to the system (gravity in this case)
-    int test = 0;
-    for (Point &point : points) {
-        if (test)
-            point.vel += dT * point.invMass * f_ext(point.pos);
-        test = (test+1)%4;
+    for (size_t i = 0; i < points.size(); i++) {
+        points[i].vel += dT * points[i].invMass * f_ext(points[i].pos);
     }
 
     dampVelocities(points);
@@ -77,7 +121,7 @@ void step(vector<Point> &points, vector<Constraint> &constraints)
     }
 
     vector<Constraint> collisionConstraints;
-    vector<Constraint> temp;
+    vector<Constraint> temp = {};
     for (Point &point : points) {
         // temp = generateCollisionConstraints(point);
         for (Constraint &constraint : temp) {
@@ -155,12 +199,11 @@ glm::vec2 gradientC(vector<glm::vec2> posArray, int index, Constraint constraint
 
     posExtra[index].x += eps;
     float CplusX = constraint.pfunc(posExtra);
-    grad.x = (CplusX - C) / eps;
 
     posExtra[index] += glm::vec2{-eps, eps};
     float CplusY = constraint.pfunc(posExtra);
-    grad.y = (CplusY - C) / eps;
-    return grad;
+
+    return {(CplusX - C) / eps, (CplusY - C) / eps};
 }
 
 void projectConstraints(vector<Constraint> &constraints, vector<Point> &points)
@@ -170,23 +213,31 @@ void projectConstraints(vector<Constraint> &constraints, vector<Point> &points)
     float sumWeightedGradSq;
     vector<glm::vec2> posArray;
     float scalingFactor;
-    glm::vec2 gradC;
+    glm::vec2 correction;
+    vector<glm::vec2> gradCs;
+
     for (Constraint &constraint : constraints) {
         sumWeightedGradSq = 0;
         posArray = {};
+        gradCs = {};
         for (int index : constraint.indices) {
             point_i = &points[index];
             posArray.push_back(point_i->newPos);
         }
         C = constraint.pfunc(posArray);
-        for (int i = 0; i < constraint.indices.size(); i++) {
-            point_i = &points[constraint.indices[i]];
-            sumWeightedGradSq += point_i->invMass * glm::length2(gradientC(posArray, i, constraint));
+        if (!constraint.equality && C >= 0) {
+            continue;
         }
-        for (int i = 0; i < constraint.indices.size(); i++) {
+        for (int i = 0; i < constraint.cardinality; i++) {
+            point_i = &points[constraint.indices[i]];
+            gradCs.push_back(gradientC(posArray, i, constraint));
+            sumWeightedGradSq += point_i->invMass * glm::length2(gradCs[i]);
+        }
+        for (int i = 0; i < constraint.cardinality; i++) {
             point_i = &points[constraint.indices[i]];
             scalingFactor = C / sumWeightedGradSq;
-            point_i->newPos -= scalingFactor * point_i->invMass * gradientC(posArray, i, constraint);
+            correction = scalingFactor * point_i->invMass * gradCs[i];
+            point_i->newPos -= correction * (float) (1 - glm::pow(1 - constraint.stiffness, 1 / (float) solverIterations));
         }
     }
 }
