@@ -1,7 +1,9 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_rect.h>
 #include <cstddef>
+#include <functional>
 #include <glm/exponential.hpp>
+#include <glm/ext/vector_float2.hpp>
 #include <glm/geometric.hpp>
 #include <strings.h>
 #include <vector>
@@ -19,6 +21,9 @@ glm::vec2 f_ext(glm::vec2 &pos);
 void dampVelocities(vector<Point> &points);
 vector<Constraint> generateCollisionConstraints(Point &point);
 void projectConstraints(vector<Constraint> &constraints, vector<Point> &points);
+void addPoint(vector<Point> &points, glm::vec2 pos, glm::vec2 vel = {0,0}, float mass = 1, float invMass = 1);
+void addConstraint(vector<Constraint> &constraints, vector<int> indices, int cardinality,
+        function<float(vector<glm::vec2>)> pfunc, bool equality = true, float stiffness = 0.1);
 
 std::function<float(std::vector<glm::vec2>)> makeDistanceConstraint(float dist)
 {
@@ -39,111 +44,97 @@ std::function<float(std::vector<glm::vec2>)> makeBoundaryConstraint(float dist)
     };
 }
 
-void initialise(vector<Point> &points, vector<Constraint> &constraints)
+void addSquare(vector<Object> &objects, glm::vec2 pos, float length = 50, float mass = 1, glm::vec2 vel = {0,0}, float stiffness = 1e-2)
 {
-    // TODO: get different objects going, after that, collisions
-    Point point;
-    // 4 points in square
-    point.pos = {25,25};
-    point.vel = {0,0};
-    point.mass = 1;
-    point.invMass = 1/point.mass;
-    points.push_back(point);
-    point.pos = {25,-25};
-    point.vel = {0,0};
-    point.mass = 1;
-    point.invMass = 1/point.mass;
-    points.push_back(point);
-    point.pos = {-25,-25};
-    point.vel = {0,0};
-    point.mass = 1;
-    point.invMass = 1/point.mass;
-    points.push_back(point);
-    point.pos = {-25,25};
-    point.vel = {0,0};
-    point.mass = 1;
-    point.invMass = 1/point.mass;
-    points.push_back(point);
-    // control point
-    point.pos = {200,0};
-    point.vel = {0,0};
-    point.mass = 1;
-    point.invMass = 1/point.mass;
-    points.push_back(point);
-    
-    Constraint constraint;
-    float stiff = 1e-2;
-    // hold in square
-    for (int i = 0; i < 4; i++) {
-        constraint.stiffness = stiff;
-        constraint.indices = {i, (i+1)%4};
-        constraint.pfunc = makeDistanceConstraint(50);
-        constraint.cardinality = 2;
-        constraint.equality = true;
-        constraints.push_back(constraint);
-    }
-    constraint.stiffness = stiff;
-    constraint.indices = {0, 2};
-    constraint.pfunc = makeDistanceConstraint(glm::sqrt(5000));
-    constraint.cardinality = 2;
-    constraint.equality = true;
-    constraints.push_back(constraint);
-    constraint.stiffness = stiff;
-    constraint.indices = {1, 3};
-    constraint.pfunc = makeDistanceConstraint(glm::sqrt(5000));
-    constraint.cardinality = 2;
-    constraint.equality = true;
-    constraints.push_back(constraint);
+    vector<Point> points = {};
+    addPoint(points, glm::vec2{length/2,length/2} + pos, vel, mass);
+    addPoint(points, glm::vec2{length/2,-length/2} + pos, vel, mass);
+    addPoint(points, glm::vec2{-length/2,-length/2} + pos, vel, mass);
+    addPoint(points, glm::vec2{-length/2,length/2} + pos, vel, mass);
 
+    vector<Constraint> constraints;
+    for (int i = 0; i < 4; i++) {
+        addConstraint(constraints, {i, (i+1)%4}, 2, makeDistanceConstraint(length), true, stiffness);
+    }
+    addConstraint(constraints, {0, 2}, 2, makeDistanceConstraint(glm::sqrt(2*glm::pow(length,2))), true, stiffness);
+    addConstraint(constraints, {1, 3}, 2, makeDistanceConstraint(glm::sqrt(2*glm::pow(length,2))), true, stiffness);
+    Object object = {
+        .points = points,
+        .constraints = constraints
+    };
+    objects.push_back(object);
+}
+
+void initialise(vector<Object> &objects)
+{
+    // TODO: collisions
+
+    addSquare(objects, {0,0}, 50, 5);
+    addSquare(objects, {0,0}, 100, 10);
+    addSquare(objects, {50,0}, 50, 5);
+    addSquare(objects, {0,50}, 50, 5);
+
+    // control point
+    Object object;
+    addPoint(object.points, {200,0});
+    objects.push_back(object);
+    
     // circle boundary
-    for (int i = 0; i < 5; i++) {
-        constraint.stiffness = 0.99;
-        constraint.indices = {i};
-        constraint.pfunc = makeBoundaryConstraint(100);
-        constraint.cardinality = 1;
-        constraint.equality = false;
-        constraints.push_back(constraint);
+    Constraint constraint;
+    for (int i = 0; i < objects.size(); i++) {
+        for (int j = 0; j < objects[i].points.size(); j++) {
+            constraint.stiffness = 0.99;
+            constraint.indices = {j};
+            constraint.pfunc = makeBoundaryConstraint(100);
+            constraint.cardinality = 1;
+            constraint.equality = false;
+            objects[i].constraints.push_back(constraint);
+        }
     }
 }
 
-void step(vector<Point> &points, vector<Constraint> &constraints)
+void step(vector<Object> &objects)
 {
-    // applying forces external to the system (gravity in this case)
-    for (size_t i = 0; i < points.size(); i++) {
-        points[i].vel += dT * points[i].invMass * f_ext(points[i].pos);
-    }
-
-    dampVelocities(points);
-
-    for (Point &point : points) {
-        point.newPos.x = point.pos.x + dT * point.vel.x;
-        point.newPos.y = point.pos.y + dT * point.vel.y;
-    }
-
-    vector<Constraint> collisionConstraints;
-    vector<Constraint> temp = {};
-    for (Point &point : points) {
-        // temp = generateCollisionConstraints(point);
-        for (Constraint &constraint : temp) {
-            collisionConstraints.push_back(constraint);
+    for (Object &object : objects) {
+        vector<Point>* points = &object.points;
+        vector<Constraint>* constraints = &object.constraints;
+        // applying forces external to the system (gravity in this case)
+        for (size_t i = 0; i < points->size(); i++) {
+            (*points)[i].vel += dT * (*points)[i].invMass * f_ext((*points)[i].pos);
         }
-    }
 
-    for (size_t i = 0; i < solverIterations; i++) {
-        projectConstraints(constraints, points);
-    }
+        dampVelocities(*points);
 
-    for (Point &point : points) {
-        point.vel.x = (point.newPos.x - point.pos.x) / (dT);
-        point.vel.y = (point.newPos.y - point.pos.y) / (dT);
+        for (Point &point : *points) {
+            point.newPos.x = point.pos.x + dT * point.vel.x;
+            point.newPos.y = point.pos.y + dT * point.vel.y;
+        }
 
-        point.pos = point.newPos;
+        vector<Constraint> collisionConstraints;
+        vector<Constraint> temp = {};
+        for (Point &point : *points) {
+            // temp = generateCollisionConstraints(point);
+            for (Constraint &constraint : temp) {
+                collisionConstraints.push_back(constraint);
+            }
+        }
+
+        for (size_t i = 0; i < solverIterations; i++) {
+            projectConstraints(*constraints, *points);
+        }
+
+        for (Point &point : *points) {
+            point.vel.x = (point.newPos.x - point.pos.x) / (dT);
+            point.vel.y = (point.newPos.y - point.pos.y) / (dT);
+
+            point.pos = point.newPos;
+        }
     }
 }
 
 glm::vec2 f_ext(glm::vec2 &pos)
 {
-    return {0,10}; // gravity
+    return {0,50}; // gravity
 }
 
 void dampVelocities(vector<Point> &points)
@@ -240,4 +231,29 @@ void projectConstraints(vector<Constraint> &constraints, vector<Point> &points)
             point_i->newPos -= correction * (float) (1 - glm::pow(1 - constraint.stiffness, 1 / (float) solverIterations));
         }
     }
+}
+
+void addPoint(vector<Point> &points, glm::vec2 pos, glm::vec2 vel, float mass, float invMass)
+{
+    if (mass != 1 && invMass == 1)
+        invMass = 1/mass;
+    Point point = {
+        .mass = mass,
+        .invMass = invMass,
+        .pos = pos,
+        .vel = vel
+    };
+    points.push_back(point);
+}
+
+void addConstraint(vector<Constraint> &constraints, vector<int> indices, int cardinality, function<float(vector<glm::vec2>)> pfunc, bool equality, float stiffness)
+{
+    Constraint constraint = {
+        .indices = indices,
+        .cardinality = cardinality,
+        .pfunc = pfunc,
+        .equality = equality,
+        .stiffness = stiffness
+    };
+    constraints.push_back(constraint);
 }

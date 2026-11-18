@@ -34,9 +34,8 @@ void setColour(SDL_Color colour, SDLState &state);
 int main(int argc, char* argv[])
 {
     // physics init
-    vector<Point> points;
-    vector<Constraint> constraints;
-    initialise(points, constraints);
+    vector<Object> objects;
+    initialise(objects);
 
     SDLState state;
     ColourSceme catppuccin = {
@@ -99,7 +98,7 @@ int main(int argc, char* argv[])
 
         // physics sim step
         if (frameCount % 2 == 0) {
-            step(points, constraints);
+            step(objects);
         }
         frameCount++;
 
@@ -108,14 +107,22 @@ int main(int argc, char* argv[])
         SDL_RenderClear(state.renderer);
 
         drawCircle({(float) width/2,(float) height/2}, 100.0f, catppuccin.crust, state);
-        for (size_t i = 0; i < points.size(); i++) {
-            drawCircle({points[i].pos.x+(float) width/2,points[i].pos.y+(float) height/2}, 5.0f, catppuccin.blue, state);
+        for (Object &object : objects) {
+            for (Point &point : object.points) {
+                drawCircle({point.pos.x+(float) width/2,point.pos.y+(float) height/2}, 5.0f, catppuccin.blue, state);
+            }
         }
 
         setColour(catppuccin.red, state);
-        for (Constraint &constraint : constraints) {
-            if (constraint.cardinality == 2)
-                SDL_RenderLine(state.renderer, points[constraint.indices[0]].pos.x+(float) width/2, points[constraint.indices[0]].pos.y+(float) height/2, points[constraint.indices[1]].pos.x+(float) width/2, points[constraint.indices[1]].pos.y+(float) height/2);
+        for (Object &object : objects) {
+            for (Constraint &constraint : object.constraints) {
+                if (constraint.cardinality == 2)
+                    SDL_RenderLine(state.renderer,
+                        object.points[constraint.indices[0]].pos.x+(float) width/2,
+                        object.points[constraint.indices[0]].pos.y+(float) height/2,
+                        object.points[constraint.indices[1]].pos.x+(float) width/2,
+                        object.points[constraint.indices[1]].pos.y+(float) height/2);
+            }
         }
 
         // swap buffers and present
