@@ -29,5 +29,13 @@ struct Object {
     std::vector<Constraint> constraints;
 };
 
-void initialise(std::vector<Object> &objects);
+struct BoundingBox {
+    float minX;
+    float minY;
+    float maxX;
+    float maxY;
+};
+
+void initialisePhysics(std::vector<Object> &objects);
 void step(std::vector<Object> &objects);
+BoundingBox polygonBoundingBox(std::vector<Point> points);

@@ -1,5 +1,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_rect.h>
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <functional>
 #include <glm/exponential.hpp>
@@ -21,9 +23,16 @@ glm::vec2 f_ext(glm::vec2 &pos);
 void dampVelocities(vector<Point> &points);
 vector<Constraint> generateCollisionConstraints(Point &point);
 void projectConstraints(vector<Constraint> &constraints, vector<Point> &points);
+
 void addPoint(vector<Point> &points, glm::vec2 pos, glm::vec2 vel = {0,0}, float mass = 1, float invMass = 1);
 void addConstraint(vector<Constraint> &constraints, vector<int> indices, int cardinality,
         function<float(vector<glm::vec2>)> pfunc, bool equality = true, float stiffness = 0.1);
+void addSquare(vector<Object> &objects, glm::vec2 pos, float length = 50, float mass = 1,
+        glm::vec2 vel = {0,0}, float stiffness = 1e-2);
+void addDistanceConstraint(vector<Constraint> &constraints, vector<Point> &points,
+        vector<int> indices, float stiffness = 1e-2);
+void addKn(vector<Object> &objects, glm::vec2 pos, float radius = 25, int degree = 4, float mass = 1,
+        glm::vec2 vel = {0,0}, float stiffness = 1e-2);
 
 std::function<float(std::vector<glm::vec2>)> makeDistanceConstraint(float dist)
 {
@@ -44,35 +53,15 @@ std::function<float(std::vector<glm::vec2>)> makeBoundaryConstraint(float dist)
     };
 }
 
-void addSquare(vector<Object> &objects, glm::vec2 pos, float length = 50, float mass = 1, glm::vec2 vel = {0,0}, float stiffness = 1e-2)
-{
-    vector<Point> points = {};
-    addPoint(points, glm::vec2{length/2,length/2} + pos, vel, mass);
-    addPoint(points, glm::vec2{length/2,-length/2} + pos, vel, mass);
-    addPoint(points, glm::vec2{-length/2,-length/2} + pos, vel, mass);
-    addPoint(points, glm::vec2{-length/2,length/2} + pos, vel, mass);
-
-    vector<Constraint> constraints;
-    for (int i = 0; i < 4; i++) {
-        addConstraint(constraints, {i, (i+1)%4}, 2, makeDistanceConstraint(length), true, stiffness);
-    }
-    addConstraint(constraints, {0, 2}, 2, makeDistanceConstraint(glm::sqrt(2*glm::pow(length,2))), true, stiffness);
-    addConstraint(constraints, {1, 3}, 2, makeDistanceConstraint(glm::sqrt(2*glm::pow(length,2))), true, stiffness);
-    Object object = {
-        .points = points,
-        .constraints = constraints
-    };
-    objects.push_back(object);
-}
-
-void initialise(vector<Object> &objects)
+void initialisePhysics(vector<Object> &objects)
 {
     // TODO: collisions
 
-    addSquare(objects, {0,0}, 50, 5);
-    addSquare(objects, {0,0}, 100, 10);
-    addSquare(objects, {50,0}, 50, 5);
-    addSquare(objects, {0,50}, 50, 5);
+    //addSquare(objects, {0,0}, 50, 5);
+    //addSquare(objects, {0,0}, 100, 10);
+    //addSquare(objects, {50,0}, 50, 5);
+
+    addKn(objects, {50,-50}, 25, 6, 10);
 
     // control point
     Object object;
@@ -134,7 +123,7 @@ void step(vector<Object> &objects)
 
 glm::vec2 f_ext(glm::vec2 &pos)
 {
-    return {0,50}; // gravity
+    return {0,-50}; // gravity
 }
 
 void dampVelocities(vector<Point> &points)
@@ -256,4 +245,80 @@ void addConstraint(vector<Constraint> &constraints, vector<int> indices, int car
         .stiffness = stiffness
     };
     constraints.push_back(constraint);
+}
+
+void addSquare(vector<Object> &objects, glm::vec2 pos, float length, float mass, glm::vec2 vel, float stiffness)
+{
+    vector<Point> points = {};
+    addPoint(points, glm::vec2{length/2,length/2} + pos, vel, mass/4);
+    addPoint(points, glm::vec2{length/2,-length/2} + pos, vel, mass/4);
+    addPoint(points, glm::vec2{-length/2,-length/2} + pos, vel, mass/4);
+    addPoint(points, glm::vec2{-length/2,length/2} + pos, vel, mass/4);
+
+    vector<Constraint> constraints;
+    for (int i = 0; i < 4; i++) {
+        addConstraint(constraints, {i, (i+1)%4}, 2, makeDistanceConstraint(length), true, stiffness);
+    }
+    addConstraint(constraints, {0, 2}, 2, makeDistanceConstraint(glm::sqrt(2*glm::pow(length,2))), true, stiffness);
+    addConstraint(constraints, {1, 3}, 2, makeDistanceConstraint(glm::sqrt(2*glm::pow(length,2))), true, stiffness);
+    Object object = {
+        .points = points,
+        .constraints = constraints
+    };
+    objects.push_back(object);
+}
+
+void addDistanceConstraint(vector<Constraint> &constraints, vector<Point> &points, vector<int> indices, float stiffness)
+{
+    Constraint constraint = {
+        .indices = indices,
+        .cardinality = 2,
+        .pfunc = makeDistanceConstraint(glm::length(points[indices[0]].pos - points[indices[1]].pos)),
+        .equality = true,
+        .stiffness = stiffness
+    };
+    constraints.push_back(constraint);
+}
+
+void addObject(vector<Object> &objects, vector<Constraint> &constraints, vector<Point> &points) {
+    Object object = {
+        .points = points,
+        .constraints = constraints
+    };
+    objects.push_back(object);
+}
+
+void addKn(vector<Object> &objects, glm::vec2 pos, float radius, int degree, float mass, glm::vec2 vel, float stiffness)
+{
+    vector<Point> points = {};
+    float angle = 0;
+    for (size_t i = 0; i < degree; i++) {
+            addPoint(points, glm::vec2{radius*sinf(angle), radius*cosf(angle)} + pos, vel, mass/degree);
+            angle += 2*SDL_PI_F/degree;
+    }
+    vector<Constraint> constraints;
+    for (int i = 0; i < degree; i++) {
+        for (int j = i+1; j < degree; j++) {
+            addDistanceConstraint(constraints, points, {i, j}, stiffness);
+        }
+    }
+    addObject(objects, constraints, points);
+}
+
+BoundingBox polygonBoundingBox(vector<Point> points)
+{
+    vector<float> xs, ys;
+    for (Point point : points) {
+        xs.push_back(point.pos.x);
+        ys.push_back(point.pos.y);
+    }
+    auto xMinMax = minmax_element(xs.begin(), xs.end());
+    auto yMinMax = minmax_element(ys.begin(), ys.end());
+    BoundingBox box = {
+        .minX = *xMinMax.first,
+        .minY = *yMinMax.first,
+        .maxX = *xMinMax.second,
+        .maxY = *yMinMax.second
+    };
+    return box;
 }
