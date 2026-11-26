@@ -38,4 +38,4 @@ struct BoundingBox {
 
 void initialisePhysics(std::vector<Object> &objects);
 void step(std::vector<Object> &objects);
-BoundingBox polygonBoundingBox(std::vector<Point> points);
+BoundingBox polygonBoundingBox(std::vector<Point> &points);

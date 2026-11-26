@@ -7,7 +7,6 @@
 #include <set>
 #include <vector>
 #include "physics.h"
-
 using namespace std;
 
 struct SDLState
@@ -15,7 +14,6 @@ struct SDLState
     SDL_Window *window;
     SDL_Renderer *renderer;
 };
-
 struct ColourSceme
 {
     SDL_Color base;
@@ -26,7 +24,6 @@ struct ColourSceme
     SDL_Color green;
     SDL_Color blue;
 };
-
 ColourSceme CATPPUCCIN = {
     .base   = {30 ,30 ,46 },
     .plain  = {205,214,244},
@@ -36,7 +33,6 @@ ColourSceme CATPPUCCIN = {
     .green  = {166,227,161},
     .blue   = {137,180,250}
 };
-
 int width = 800;
 int height = 600;
 
@@ -277,15 +273,7 @@ void drawBoundingBoxes(vector<Object> &objects, SDLState &state)
         1.0f
     };
     for (Object &object : objects) {
-        printf("world point: (%f,%f) -> screen (%f,%f)\n",
-               object.points[0].pos.x, object.points[0].pos.y,
-               screenPosition(object.points[0].pos).x, screenPosition(object.points[0].pos).y);
         BoundingBox box = polygonBoundingBox(object.points);
-        // and for the box:
-        printf("box corner world (%f,%f) -> screen (%f,%f)\n",
-               box.minX, box.maxY,
-       screenPosition({box.minX, box.maxY}).x,
-       screenPosition({box.minX, box.maxY}).y);
         SDL_Vertex vertices[4];
         for (SDL_Vertex &vertex : vertices) {
             vertex.color = boundingBoxColour;

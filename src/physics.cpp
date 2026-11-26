@@ -305,7 +305,7 @@ void addKn(vector<Object> &objects, glm::vec2 pos, float radius, int degree, flo
     addObject(objects, constraints, points);
 }
 
-BoundingBox polygonBoundingBox(vector<Point> points)
+BoundingBox polygonBoundingBox(vector<Point> &points)
 {
     vector<float> xs, ys;
     for (Point point : points) {
@@ -321,4 +321,37 @@ BoundingBox polygonBoundingBox(vector<Point> points)
         .maxY = *yMinMax.second
     };
     return box;
+}
+
+bool pointInPolygon(Point &point, vector<Point> &points)
+{
+    // Quick precheck
+    BoundingBox box = polygonBoundingBox(points);
+    if (point.pos.x < box.minX || point.pos.x > box.maxX || point.pos.y < box.minY || point.pos.y > box.maxY)
+        return false;
+
+    // Ray-cast test
+    // points is an implicitly closed list of positions
+    // a ray is cast from point in +X direction TODO: change to x -> p ray
+
+    bool inside = false;
+    int n = points.size();
+    int j = n - 1; // wraps edges
+    glm::vec2* p1;
+    glm::vec2* p2;
+    bool rayStraddlesEdge;
+    float xCross;
+    for (int i = 0; i < n; i++) {
+        p1 = &points[i].pos;
+        p2 = &points[j].pos;
+        // >= handles case where point is on vertex
+        rayStraddlesEdge = (p1->y > point.pos.y) != (p2->y > point.pos.y);
+        if (rayStraddlesEdge) {
+            xCross = (p2->x - p1->x) * (point.pos.y - p1->y) / (p2->y - p1->y) + p1->x;
+            if (point.pos.x < xCross)
+                inside = !inside;
+        }
+        j = i; // next edge
+    }
+    return inside;
 }
