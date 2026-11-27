@@ -21,17 +21,17 @@ using namespace std;
 
 glm::vec2 f_ext(glm::vec2 &pos);
 void dampVelocities(vector<Point> &points);
-vector<Constraint> generateCollisionConstraints(Point &point);
+void generateCollisionConstraints(Point &point, size_t index, vector<Point> &points, vector<Constraint> &constraints);
 void projectConstraints(vector<Constraint> &constraints, vector<Point> &points);
 
 void addPoint(vector<Point> &points, glm::vec2 pos, glm::vec2 vel = {0,0}, float mass = 1, float invMass = 1);
-void addConstraint(vector<Constraint> &constraints, vector<int> indices, int cardinality,
+void addConstraint(vector<Constraint> &constraints, vector<size_t> indices, size_t cardinality,
         function<float(vector<glm::vec2>)> pfunc, bool equality = true, float stiffness = 0.1);
 void addSquare(vector<Object> &objects, glm::vec2 pos, float length = 50, float mass = 1,
         glm::vec2 vel = {0,0}, float stiffness = 1e-2);
 void addDistanceConstraint(vector<Constraint> &constraints, vector<Point> &points,
-        vector<int> indices, float stiffness = 1e-2);
-void addKn(vector<Object> &objects, glm::vec2 pos, float radius = 25, int degree = 4, float mass = 1,
+        vector<size_t> indices, float stiffness = 1e-2);
+void addKn(vector<Object> &objects, glm::vec2 pos, float radius = 25, size_t degree = 4, float mass = 1,
         glm::vec2 vel = {0,0}, float stiffness = 1e-2);
 
 std::function<float(std::vector<glm::vec2>)> makeDistanceConstraint(float dist)
@@ -57,11 +57,10 @@ void initialisePhysics(vector<Object> &objects)
 {
     // TODO: collisions
 
-    //addSquare(objects, {0,0}, 50, 5);
-    //addSquare(objects, {0,0}, 100, 10);
-    //addSquare(objects, {50,0}, 50, 5);
+    addSquare(objects, {-30,0}, 50, 5);
+    addSquare(objects, {20,20}, 50, 5);
 
-    addKn(objects, {50,-50}, 25, 6, 10);
+    // addKn(objects, {50,-50}, 25, 6, 10);
 
     // control point
     Object object;
@@ -70,8 +69,8 @@ void initialisePhysics(vector<Object> &objects)
     
     // circle boundary
     Constraint constraint;
-    for (int i = 0; i < objects.size(); i++) {
-        for (int j = 0; j < objects[i].points.size(); j++) {
+    for (size_t i = 0; i < objects.size(); i++) {
+        for (size_t j = 0; j < objects[i].points.size(); j++) {
             constraint.stiffness = 0.99;
             constraint.indices = {j};
             constraint.pfunc = makeBoundaryConstraint(100);
@@ -99,18 +98,17 @@ void step(vector<Object> &objects)
             point.newPos.y = point.pos.y + dT * point.vel.y;
         }
 
-        vector<Constraint> collisionConstraints;
-        vector<Constraint> temp = {};
-        for (Point &point : *points) {
-            // temp = generateCollisionConstraints(point);
-            for (Constraint &constraint : temp) {
-                collisionConstraints.push_back(constraint);
+        size_t numConstraints = constraints->size();
+        for (size_t i = 0; i < points->size(); i++) {
+            for (Object &objectCompared: objects) {
+                generateCollisionConstraints((*points)[i], i, objectCompared.points, *constraints);
             }
         }
 
         for (size_t i = 0; i < solverIterations; i++) {
             projectConstraints(*constraints, *points);
         }
+        constraints->resize(numConstraints);
 
         for (Point &point : *points) {
             point.vel.x = (point.newPos.x - point.pos.x) / (dT);
@@ -164,12 +162,7 @@ void dampVelocities(vector<Point> &points)
     }
 }
 
-vector<Constraint> generateCollisionConstraints(Point point)
-{
-    return {};
-}
-
-glm::vec2 gradientC(vector<glm::vec2> posArray, int index, Constraint constraint)
+glm::vec2 gradientC(vector<glm::vec2> posArray, size_t index, Constraint constraint)
 {
     // del_p_j C(p_1,...,p_n) ≈ (C(p_1,...,p_k+ε,...,p_n) - C(p_1,...,p_n))/ε
     vector<glm::vec2> posExtra = posArray;
@@ -200,7 +193,7 @@ void projectConstraints(vector<Constraint> &constraints, vector<Point> &points)
         sumWeightedGradSq = 0;
         posArray = {};
         gradCs = {};
-        for (int index : constraint.indices) {
+        for (size_t index : constraint.indices) {
             point_i = &points[index];
             posArray.push_back(point_i->newPos);
         }
@@ -208,12 +201,12 @@ void projectConstraints(vector<Constraint> &constraints, vector<Point> &points)
         if (!constraint.equality && C >= 0) {
             continue;
         }
-        for (int i = 0; i < constraint.cardinality; i++) {
+        for (size_t i = 0; i < constraint.cardinality; i++) {
             point_i = &points[constraint.indices[i]];
             gradCs.push_back(gradientC(posArray, i, constraint));
             sumWeightedGradSq += point_i->invMass * glm::length2(gradCs[i]);
         }
-        for (int i = 0; i < constraint.cardinality; i++) {
+        for (size_t i = 0; i < constraint.cardinality; i++) {
             point_i = &points[constraint.indices[i]];
             scalingFactor = C / sumWeightedGradSq;
             correction = scalingFactor * point_i->invMass * gradCs[i];
@@ -235,7 +228,7 @@ void addPoint(vector<Point> &points, glm::vec2 pos, glm::vec2 vel, float mass, f
     points.push_back(point);
 }
 
-void addConstraint(vector<Constraint> &constraints, vector<int> indices, int cardinality, function<float(vector<glm::vec2>)> pfunc, bool equality, float stiffness)
+void addConstraint(vector<Constraint> &constraints, vector<size_t> indices, size_t cardinality, function<float(vector<glm::vec2>)> pfunc, bool equality, float stiffness)
 {
     Constraint constraint = {
         .indices = indices,
@@ -256,7 +249,7 @@ void addSquare(vector<Object> &objects, glm::vec2 pos, float length, float mass,
     addPoint(points, glm::vec2{-length/2,length/2} + pos, vel, mass/4);
 
     vector<Constraint> constraints;
-    for (int i = 0; i < 4; i++) {
+    for (size_t i = 0; i < 4; i++) {
         addConstraint(constraints, {i, (i+1)%4}, 2, makeDistanceConstraint(length), true, stiffness);
     }
     addConstraint(constraints, {0, 2}, 2, makeDistanceConstraint(glm::sqrt(2*glm::pow(length,2))), true, stiffness);
@@ -268,7 +261,7 @@ void addSquare(vector<Object> &objects, glm::vec2 pos, float length, float mass,
     objects.push_back(object);
 }
 
-void addDistanceConstraint(vector<Constraint> &constraints, vector<Point> &points, vector<int> indices, float stiffness)
+void addDistanceConstraint(vector<Constraint> &constraints, vector<Point> &points, vector<size_t> indices, float stiffness)
 {
     Constraint constraint = {
         .indices = indices,
@@ -288,7 +281,7 @@ void addObject(vector<Object> &objects, vector<Constraint> &constraints, vector<
     objects.push_back(object);
 }
 
-void addKn(vector<Object> &objects, glm::vec2 pos, float radius, int degree, float mass, glm::vec2 vel, float stiffness)
+void addKn(vector<Object> &objects, glm::vec2 pos, float radius, size_t degree, float mass, glm::vec2 vel, float stiffness)
 {
     vector<Point> points = {};
     float angle = 0;
@@ -297,8 +290,8 @@ void addKn(vector<Object> &objects, glm::vec2 pos, float radius, int degree, flo
             angle += 2*SDL_PI_F/degree;
     }
     vector<Constraint> constraints;
-    for (int i = 0; i < degree; i++) {
-        for (int j = i+1; j < degree; j++) {
+    for (size_t i = 0; i < degree; i++) {
+        for (size_t j = i+1; j < degree; j++) {
             addDistanceConstraint(constraints, points, {i, j}, stiffness);
         }
     }
@@ -323,35 +316,54 @@ BoundingBox polygonBoundingBox(vector<Point> &points)
     return box;
 }
 
-bool pointInPolygon(Point &point, vector<Point> &points)
+void generateCollisionConstraints(Point &point, size_t index, vector<Point> &points, vector<Constraint> &constraints)
 {
     // Quick precheck
     BoundingBox box = polygonBoundingBox(points);
     if (point.pos.x < box.minX || point.pos.x > box.maxX || point.pos.y < box.minY || point.pos.y > box.maxY)
-        return false;
+        return;
 
     // Ray-cast test
     // points is an implicitly closed list of positions
-    // a ray is cast from point in +X direction TODO: change to x -> p ray
+    // a ray is cast from point pos to newPos 
+    // TODO: make the ray start from outside bounding box and continue until it exits bounding box
 
-    bool inside = false;
-    int n = points.size();
-    int j = n - 1; // wraps edges
-    glm::vec2* p1;
-    glm::vec2* p2;
-    bool rayStraddlesEdge;
-    float xCross;
-    for (int i = 0; i < n; i++) {
-        p1 = &points[i].pos;
-        p2 = &points[j].pos;
-        // >= handles case where point is on vertex
-        rayStraddlesEdge = (p1->y > point.pos.y) != (p2->y > point.pos.y);
-        if (rayStraddlesEdge) {
-            xCross = (p2->x - p1->x) * (point.pos.y - p1->y) / (p2->y - p1->y) + p1->x;
-            if (point.pos.x < xCross)
-                inside = !inside;
+    size_t n = points.size();
+    size_t j = n - 1; // wraps edges
+    glm::vec2* p1,* p2;
+    float t,u;
+    glm::vec2 edgeDiff, projDiff;
+    float scalarProduct, dotProduct;
+    glm::vec2 surfaceNormal, entryPoint;
+    for (size_t i = 0; i < n; i++) {
+        p1 = &(points[i].pos);
+        p2 = &(points[j].pos);
+        edgeDiff = glm::abs(*p1-*p2);
+        projDiff = glm::abs(point.pos - point.newPos);
+        scalarProduct = glm::length2(edgeDiff) * glm::length2(projDiff);
+        dotProduct = glm::pow(glm::dot(edgeDiff, projDiff), 2);
+        if (point.pos == point.newPos || scalarProduct - dotProduct < EPSILON) {
+            continue;
+        }
+        t = ((point.pos.x - p1->x)          * (p1->y       - p2->y) - (point.pos.y - p1->y)          * (p1->x       - p2->x)) /
+            ((point.pos.x - point.newPos.x) * (p1->y       - p2->y) - (point.pos.y - point.newPos.y) * (p1->x       - p2->x));
+        u =-((point.pos.x - point.newPos.x) * (point.pos.y - p1->y) - (point.pos.y - point.newPos.y) * (point.pos.x - p1->x)) /
+            ((point.pos.x - point.newPos.x) * (p1->y       - p2->y) - (point.pos.y - point.newPos.y) * (p1->x       - p2->x));
+        if (t <= 1 && t >= 0 && u <= 1 && u >= 0) {
+            surfaceNormal = glm::normalize(glm::vec2{-(p2->y - p1->y), p2->x - p1->x}); // rotated 90 clockwise, for clockwise ordering of points
+            entryPoint = {
+                ((point.pos.x * point.newPos.y - point.pos.y * point.newPos.x) * (p1->x - p2->x) - (point.pos.x - point.newPos.x) * (p1->x * p2->y - p1->y * p2->x)) /
+                ((point.pos.x                  - point.newPos.x)               * (p1->y - p2->y) - (point.pos.y - point.newPos.y) * (p1->x         - p2->x)),
+                ((point.pos.x * point.newPos.y - point.pos.y * point.newPos.x) * (p1->y - p2->y) - (point.pos.y - point.newPos.y) * (p1->x * p2->y - p1->y * p2->x)) /
+                ((point.pos.x                  - point.newPos.x)               * (p1->y - p2->y) - (point.pos.y - point.newPos.y) * (p1->x         - p2->x))
+            };
+            addConstraint(constraints, {index}, 1,
+                [surfaceNormal, entryPoint](std::vector<glm::vec2> array) -> float {
+                    return glm::dot(array[0] - entryPoint, surfaceNormal);
+                }, 
+                false, 1
+            );
         }
         j = i; // next edge
     }
-    return inside;
 }
